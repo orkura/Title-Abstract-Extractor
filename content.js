@@ -137,6 +137,22 @@
     };
   }
 
+  function readMessagePaper(message) {
+    const paper = message?.paper;
+    if (!paper?.title && !paper?.abstract) return null;
+
+    const title = normalizeText(paper.title);
+    const abstract = normalizeText(paper.abstract);
+    return {
+      title,
+      abstract,
+      url: paper.url || location.href,
+      source: paper.source || "手动填写",
+      extractedAt: paper.extractedAt || new Date().toISOString(),
+      ok: Boolean(title || abstract)
+    };
+  }
+
   function copyToClipboard(text) {
     return navigator.clipboard.writeText(text);
   }
@@ -439,11 +455,28 @@
           padding: 14px;
         }
         #${PANEL_ID} .tae-label {
+          display: block;
           margin: 0 0 5px;
           color: #52616f;
           font-size: 12px;
           font-weight: 700;
           text-transform: uppercase;
+        }
+        #${PANEL_ID} .tae-title,
+        #${PANEL_ID} .tae-abstract {
+          width: 100%;
+          border: 1px solid #d9e2ec;
+          border-radius: 4px;
+          padding: 9px 10px;
+          color: #17212b;
+          background: #ffffff;
+          font: 13px/1.55 Arial, "Helvetica Neue", sans-serif;
+          resize: vertical;
+        }
+        #${PANEL_ID} .tae-title:focus,
+        #${PANEL_ID} .tae-abstract:focus {
+          outline: 2px solid rgba(11, 117, 187, 0.2);
+          border-color: #0b75bb;
         }
         #${PANEL_ID} .tae-title {
           margin: 0 0 14px;
@@ -452,9 +485,8 @@
         }
         #${PANEL_ID} .tae-abstract {
           margin: 0 0 14px;
+          min-height: 140px;
           max-height: 280px;
-          overflow: auto;
-          white-space: pre-wrap;
         }
         #${PANEL_ID} .tae-actions {
           display: flex;
@@ -588,10 +620,10 @@
         </div>
         <div class="tae-body">
           <p class="tae-status success">已识别：${escapeHtml(data.source)}</p>
-          <p class="tae-label">标题</p>
-          <p class="tae-title"></p>
-          <p class="tae-label">摘要</p>
-          <p class="tae-abstract"></p>
+          <label class="tae-label" for="tae-floating-title">标题</label>
+          <textarea id="tae-floating-title" class="tae-title" rows="2" placeholder="未识别到标题时可在这里手动填写"></textarea>
+          <label class="tae-label" for="tae-floating-abstract">摘要</label>
+          <textarea id="tae-floating-abstract" class="tae-abstract" rows="6" placeholder="未识别到摘要时可在这里手动填写"></textarea>
           <div class="tae-actions">
             <button type="button" data-action="analyze">分析论文</button>
             <button type="button" class="secondary" data-action="result">展开分析</button>
@@ -603,8 +635,23 @@
       </div>
     `;
 
-    root.querySelector(".tae-title").textContent = data.title || "未识别到标题";
-    root.querySelector(".tae-abstract").textContent = data.abstract || "未识别到摘要";
+    const titleInput = root.querySelector(".tae-title");
+    const abstractInput = root.querySelector(".tae-abstract");
+    const readPanelData = () => {
+      const title = normalizeText(titleInput.value);
+      const abstract = normalizeText(abstractInput.value);
+      return {
+        ...data,
+        title,
+        abstract,
+        url: data.url || location.href,
+        source: title !== data.title || abstract !== data.abstract ? "手动填写" : data.source,
+        ok: Boolean(title || abstract)
+      };
+    };
+
+    titleInput.value = data.title || "";
+    abstractInput.value = data.abstract || "";
     root.querySelector(".tae-source").textContent = `来源规则：${data.source}`;
     root.querySelector(".tae-launcher").addEventListener("click", () => root.classList.remove("is-collapsed"));
     root.querySelector(".tae-close").addEventListener("click", () => root.classList.add("is-collapsed"));
@@ -649,10 +696,15 @@
       status.textContent = "正在调用大语言模型分析论文...";
 
       try {
+        const paper = readPanelData();
+        if (!paper.ok) {
+          throw new Error("请先填写标题或摘要。");
+        }
+
         const stored = await storageGet({ apiSettings: null, analysisPrompt: "" });
         const response = await sendRuntimeMessage({
           type: "TAE_ANALYZE_PAPER",
-          paper: data,
+          paper,
           settings: stored.apiSettings || {},
           prompt: stored.analysisPrompt || ""
         });
@@ -668,7 +720,7 @@
             endpoint: response.endpoint,
             model: response.model,
             notice: response.notice,
-            paperTitle: data.title || ""
+            paperTitle: paper.title || ""
           }
         });
 
@@ -707,14 +759,14 @@
     }
 
     if (message?.type === "TAE_SHOW_PANEL") {
-      const data = extractPaperInfo();
+      const data = readMessagePaper(message) || extractPaperInfo();
       createPanel(data);
       sendResponse(data);
       return true;
     }
 
     if (message?.type === "TAE_ENABLE_FLOATING") {
-      const data = extractPaperInfo();
+      const data = readMessagePaper(message) || extractPaperInfo();
       createPanel(data);
       sendResponse(data);
       return true;

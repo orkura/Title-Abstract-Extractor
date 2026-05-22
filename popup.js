@@ -70,6 +70,8 @@ let analysisPrompt = DEFAULT_PROMPT;
 let analysisResult = null;
 let floatingEnabled = false;
 let knowledgeBase = { ...DEFAULT_KNOWLEDGE_BASE };
+let manualEdited = false;
+let activeTabUrl = "";
 
 function storageGet(defaults) {
   return new Promise((resolve, reject) => {
@@ -106,7 +108,10 @@ function getActiveTab() {
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       const error = chrome.runtime.lastError;
       if (error) reject(new Error(error.message));
-      else resolve(tab);
+      else {
+        activeTabUrl = tab?.url || activeTabUrl;
+        resolve(tab);
+      }
     });
   });
 }
@@ -149,6 +154,30 @@ function formatData(data) {
   return `Title: ${data.title || "未识别"}\n\nAbstract: ${data.abstract || "未识别"}\n\nURL: ${data.url || ""}`;
 }
 
+function readPaperDataFromFields() {
+  const title = elements.title.value.trim();
+  const abstract = elements.abstract.value.trim();
+
+  return {
+    ...(currentData || {}),
+    title,
+    abstract,
+    url: currentData?.url || activeTabUrl || "",
+    source: manualEdited ? "手动填写" : currentData?.source || "手动填写",
+    extractedAt: currentData?.extractedAt || new Date().toISOString(),
+    ok: Boolean(title || abstract)
+  };
+}
+
+function syncPaperDataFromFields({ markManual = false } = {}) {
+  if (markManual) {
+    manualEdited = true;
+  }
+
+  currentData = readPaperDataFromFields();
+  return currentData;
+}
+
 async function sendToActiveTab(message) {
   const tab = await getActiveTab();
   if (!tab?.id) throw new Error("无法读取当前标签页。");
@@ -166,16 +195,23 @@ async function extract() {
 
   try {
     const data = await sendToActiveTab({ type: "TAE_EXTRACT" });
-    currentData = data;
+    manualEdited = false;
+    currentData = {
+      ...(data || {}),
+      title: data?.title || "",
+      abstract: data?.abstract || "",
+      url: data?.url || activeTabUrl || "",
+      ok: Boolean(data?.title || data?.abstract)
+    };
     elements.title.value = data?.title || "";
     elements.abstract.value = data?.abstract || "";
     setStatus(
-      data?.ok ? `已识别：${data.source}` : "未识别到标题或摘要，可尝试悬浮模式或检查网页是否加载完成。",
+      data?.ok ? `已识别：${data.source}` : "未识别到标题或摘要，可在下方手动填写后复制或分析。",
       data?.ok ? "success" : "info"
     );
-    return data;
+    return currentData;
   } catch (error) {
-    setStatus(`提取失败：${error.message}`, "error");
+    setStatus(`提取失败：${error.message}。可手动填写标题或摘要后继续分析。`, "error");
     throw error;
   }
 }
@@ -574,8 +610,14 @@ function setBusy(button, isBusy, busyText) {
 }
 
 async function ensurePaperData() {
-  if (currentData?.title || currentData?.abstract) return currentData;
-  return extract();
+  const fieldData = syncPaperDataFromFields();
+  if (fieldData.ok) return fieldData;
+
+  await extract();
+  const extractedData = syncPaperDataFromFields();
+  if (extractedData.ok) return extractedData;
+
+  throw new Error("请先填写标题或摘要。");
 }
 
 async function analyzeCurrentPaper() {
@@ -640,18 +682,34 @@ async function init() {
   extract().catch(() => {});
 }
 
+elements.title.addEventListener("input", () => syncPaperDataFromFields({ markManual: true }));
+elements.abstract.addEventListener("input", () => syncPaperDataFromFields({ markManual: true }));
 elements.refresh.addEventListener("click", () => extract().catch(() => {}));
 elements.copyTitle.addEventListener("click", () => copyText(elements.title.value, "标题已复制。"));
 elements.copyAbstract.addEventListener("click", () => copyText(elements.abstract.value, "摘要已复制。"));
-elements.copyAll.addEventListener("click", () => currentData && copyText(formatData(currentData), "标题、摘要和 URL 已复制。"));
+elements.copyAll.addEventListener("click", () => {
+  const data = syncPaperDataFromFields();
+  if (!data.ok) {
+    setStatus("请先填写标题或摘要。", "error");
+    return;
+  }
+
+  copyText(formatData(data), "标题、摘要和 URL 已复制。");
+});
 elements.showPanel.addEventListener("click", async () => {
   floatingEnabled = !floatingEnabled;
   await storageSet({ floatingEnabled });
   updateFloatingButton();
 
-  const data = await sendToActiveTab({
+  const paper = syncPaperDataFromFields();
+  const message = {
     type: floatingEnabled ? "TAE_ENABLE_FLOATING" : "TAE_DISABLE_FLOATING"
-  });
+  };
+  if (floatingEnabled && paper.ok) {
+    message.paper = paper;
+  }
+
+  const data = await sendToActiveTab(message);
   currentData = data || currentData;
   setStatus(
     floatingEnabled ? "悬浮模式已开启，新打开的页面也会自动显示悬浮球。" : "悬浮模式已关闭。",

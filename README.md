@@ -1,52 +1,164 @@
 # Title Abstract Extractor
 
-用于在论文详情页自动提取标题和摘要的浏览器插件，支持 IEEE Xplore、ScienceDirect，并包含 SpringerLink、ACM Digital Library 和通用网页元数据兜底规则。
+Title Abstract Extractor 是一个面向论文阅读和筛选场景的浏览器扩展。它可以在论文详情页自动提取标题、摘要和 URL，并调用 OpenAI-compatible Chat Completions API，按你的研究需求生成 Markdown 格式的论文筛选意见。
+
+扩展无需构建步骤，适合直接以 Chrome / Edge 开发者模式加载使用。
+
+## 功能亮点
+
+- 自动提取论文标题、摘要和页面 URL。
+- 识别失败或识别不完整时，可在弹窗中手动填写或修正标题、摘要。
+- 支持复制标题、复制摘要、复制标题/摘要/URL 全文。
+- 可调用兼容 Chat Completions 的大语言模型 API 分析论文价值。
+- 支持自定义论文筛选提示词，用于匹配个人研究方向、关键词和排除条件。
+- 分析结果支持 Markdown 渲染，并可复制原始 Markdown。
+- 支持页面悬浮球模式，可在网页右下角直接查看、编辑、分析和复制结果。
+- 支持导入本地 `.md` / `.markdown` 文件作为知识库，在分析时作为补充背景。
+- 提供右键菜单入口，可在页面上快速打开悬浮面板。
+
+## 支持范围
+
+扩展内置了部分论文站点的专用识别规则，并提供通用网页元数据兜底：
+
+- IEEE Xplore
+- ScienceDirect
+- SpringerLink
+- ACM Digital Library
+- 其他包含常见论文元数据的网页
+
+`manifest.json` 中还允许扩展运行在常见 HTTPS 页面上，因此未列入专用规则的网站也会尝试通过 `citation_title`、`citation_abstract`、`description`、`og:title`、`og:description`、页面 `h1` 和 `Abstract` 内容块识别论文信息。
 
 ## 安装
 
-1. 打开 Chrome 或 Edge 的扩展程序页面。
-2. 开启“开发者模式”。
-3. 选择“加载已解压的扩展程序”。
-4. 选择本项目目录：`F:\Project\浏览器插件开发\Title-Abstract-Extractor`。
+1. 下载或克隆本项目到本地。
+2. 打开浏览器扩展程序页面：
+   - Chrome: `chrome://extensions/`
+   - Edge: `edge://extensions/`
+3. 开启“开发者模式”。
+4. 点击“加载已解压的扩展程序”。
+5. 选择本项目根目录，也就是包含 `manifest.json` 的目录。
 
-## 使用
+## 快速使用
 
-- 打开 IEEE、ScienceDirect 等论文详情页。
-- 点击浏览器工具栏中的插件图标，弹窗会自动显示标题和摘要。
-- 可复制标题、复制摘要、复制全部，或开启悬浮模式。
-- 开启悬浮模式后，新打开的匹配页面会自动在右下角显示悬浮球，点击悬浮球可展开完整功能面板。
-- 在“LLM 论文筛选”区域配置 API、编辑提示词，然后点击“分析论文”。
-- 模型输出会在“分析结果”窗口中按 Markdown 渲染，也可以复制原始 Markdown。
-- 系统设置中可导入由 `.md` / `.markdown` 文件组成的知识库目录。知识库默认关闭，启用后会在分析时作为补充背景传给模型。
+1. 打开论文详情页。
+2. 点击浏览器工具栏中的扩展图标。
+3. 弹窗会自动读取当前页面，并显示识别到的标题和摘要。
+4. 如识别结果为空或不准确，可直接在“标题”“摘要”输入框中手动填写或修改。
+5. 点击“复制全部”可复制标题、摘要和 URL。
+6. 点击“分析论文”可调用已配置的大语言模型生成筛选意见。
+7. 点击右上角齿轮可配置 API、模型、提示词和知识库。
 
-## LLM API
+手动填写后的内容会进入当前弹窗状态，复制、分析和开启悬浮模式时都会优先使用输入框里的标题和摘要。悬浮窗内也可以继续修改标题和摘要，悬浮窗里的“分析论文”会使用面板当前内容。
 
-插件使用 OpenAI-compatible Chat Completions 格式调用模型。默认 API 地址为：
+## 悬浮模式
+
+在弹窗功能区点击“悬浮模式”后，扩展会在当前页面右下角显示悬浮球。再次打开新的匹配页面时，悬浮球也会自动出现。
+
+点击悬浮球可展开完整面板，面板内支持：
+
+- 查看或修改标题和摘要
+- 分析论文
+- 展开或收起分析结果
+- 复制 Markdown 格式的分析结果
+
+悬浮窗右上角的 `×` 只会把面板收回成悬浮球。若要关闭悬浮模式，请回到扩展弹窗再次点击“关闭悬浮”。
+
+## API 设置
+
+扩展使用 OpenAI-compatible Chat Completions 格式调用模型。默认配置为：
 
 ```text
-https://api.openai.com/v1/chat/completions
+API 地址：https://api.deepseek.com/chat/completions
+模型：deepseek-v4-flash
+Temperature：0.2
 ```
 
-如果使用兼容服务或本地模型网关，可以在 API 设置中修改 API 地址、模型名称、API Key 和 Temperature。API Key 保存在浏览器本地存储中。
+可以在系统设置中修改：
 
-DeepSeek 可以填写：
+- API 地址
+- 模型名称
+- API Key
+- Temperature
+
+如果 API 地址未包含 `/chat/completions`，扩展会自动补全该路径。API Key 保存在浏览器本地存储中，请不要将自己的 API Key 提交到代码仓库或公开分享。
+
+### DeepSeek 兼容
+
+DeepSeek 地址可以填写：
 
 ```text
 https://api.deepseek.com
 ```
 
-插件会自动补全为：
+扩展会自动规范化为：
 
 ```text
 https://api.deepseek.com/chat/completions
 ```
 
-当前 DeepSeek Chat Completions 文档中的模型名为 `deepseek-v4-flash` 和 `deepseek-v4-pro`。如果仍填写旧模型名 `deepseek-reasoner` 或 `deepseek-chat`，插件会自动兼容为 `deepseek-v4-flash`，并为 DeepSeek 请求开启 thinking。
+模型示例：
+
+```text
+deepseek-v4-flash
+deepseek-v4-pro
+```
+
+如果仍填写旧模型名 `deepseek-reasoner` 或 `deepseek-chat`，扩展会自动兼容为 `deepseek-v4-flash`，并为 DeepSeek 请求开启 `thinking`。
+
+## 提示词
+
+系统设置中可以编辑论文分析提示词。默认提示词会要求模型输出：
+
+- 结论：推荐阅读 / 可略读 / 不推荐
+- 匹配理由
+- 潜在价值
+- 风险与缺口
+- 下一步建议
+
+你可以把自己的研究方向、关注方法、应用场景、关键词和排除条件写入提示词，让模型按个人需求判断论文是否值得深入阅读。
 
 ## 知识库
 
-浏览器扩展不能仅凭本地路径字符串自动读取磁盘目录，因此知识库通过“选择目录”导入。插件会读取所选目录下所有 Markdown 文件，并保存在浏览器本地存储中。启用知识库后，分析论文时会自动把这些 Markdown 内容作为补充资料加入模型上下文；默认关闭。
+知识库默认关闭。开启后，扩展会在分析论文时把已导入的 Markdown 文件作为补充背景传给模型。
+
+使用方式：
+
+1. 打开系统设置。
+2. 在“知识库”区域点击“选择目录”。
+3. 选择包含 `.md` 或 `.markdown` 文件的目录。
+4. 勾选“启用”。
+5. 保存设置。
+
+浏览器扩展不能仅凭本地路径字符串自动扫描磁盘目录，因此知识库采用“选择目录并导入”的方式。导入后的 Markdown 内容会保存在浏览器本地存储中，可随时清空。分析时知识库内容最多取前 120000 个字符，过长内容会被截断。
 
 ## 识别逻辑
 
-插件优先使用站点专用选择器，例如 IEEE Xplore 的论文标题和摘要区域、ScienceDirect 的 `title-text` 和 `abstract` 区域。若未命中，则使用 `citation_title`、`citation_abstract`、`description`、`og:title` 等通用元数据，并尝试查找页面中标记为 Abstract 的内容块。
+扩展按以下顺序提取论文信息：
+
+1. 根据域名匹配站点专用选择器。
+2. 读取通用论文元数据，例如 `citation_title`、`citation_abstract`。
+3. 读取网页描述元数据，例如 `description`、`og:title`、`og:description`。
+4. 尝试读取页面主标题和标记为 `Abstract` 的正文区域。
+5. 如果仍未识别，可在弹窗中手动填写标题或摘要。
+
+由于论文网站页面结构可能变化，自动识别不保证覆盖所有站点。遇到识别失败时，可先等待页面加载完成后点击“重新提取”，或直接使用手动填写功能。
+
+## 文件结构
+
+```text
+.
+├── manifest.json      # 扩展清单与权限声明
+├── background.js      # 后台脚本，负责右键菜单、模型 API 调用和知识库上下文拼接
+├── content.js         # 内容脚本，负责网页信息提取和悬浮球面板
+├── popup.html         # 扩展弹窗结构
+├── popup.css          # 扩展弹窗样式
+├── popup.js           # 扩展弹窗交互、设置、分析结果和知识库导入逻辑
+└── README.md
+```
+
+## 注意事项
+
+- “分析论文”功能需要可用的 API 地址、模型名称和 API Key。
+- 知识库内容会进入模型上下文，请不要导入不希望发送给 API 服务商的敏感信息。
+- 手动填写内容只保存在当前弹窗状态中；刷新提取会重新读取网页内容。
+- 如果浏览器提示某些页面无法注入脚本，通常是浏览器内置页面、扩展商店页面或权限受限页面，不属于普通论文网页。
