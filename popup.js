@@ -1,6 +1,6 @@
 const DEFAULT_API_SETTINGS = {
-  endpoint: "https://api.openai.com/v1/chat/completions",
-  model: "gpt-4o-mini",
+  endpoint: "https://api.deepseek.com/chat/completions",
+  model: "deepseek-v4-flash",
   apiKey: "",
   temperature: 0.2
 };
@@ -9,8 +9,14 @@ const DEEPSEEK_LEGACY_MODEL_MAP = {
   "deepseek-reasoner": "deepseek-v4-flash",
   "deepseek-chat": "deepseek-v4-flash"
 };
+const DEFAULT_KNOWLEDGE_BASE = {
+  enabled: false,
+  directoryName: "",
+  importedAt: "",
+  files: []
+};
 
-const DEFAULT_PROMPT = `你是我的论文筛选助手。请根据论文题目和摘要判断它是否符合我的研究需要。
+const DEFAULT_PROMPT = `你是我的论文筛选助手。请根据论文标题和摘要判断它是否符合我的研究需要。
 
 我的研究需要：
 - 研究方向：
@@ -31,18 +37,15 @@ const elements = {
   title: document.getElementById("title"),
   abstract: document.getElementById("abstract"),
   refresh: document.getElementById("refresh"),
+  settingsButton: document.getElementById("settingsButton"),
   copyTitle: document.getElementById("copyTitle"),
   copyAbstract: document.getElementById("copyAbstract"),
   copyAll: document.getElementById("copyAll"),
-  download: document.getElementById("download"),
   showPanel: document.getElementById("showPanel"),
-  apiSettings: document.getElementById("apiSettings"),
-  promptSettings: document.getElementById("promptSettings"),
   analyzePaper: document.getElementById("analyzePaper"),
   openResult: document.getElementById("openResult"),
   apiState: document.getElementById("apiState"),
   apiDialog: document.getElementById("apiDialog"),
-  promptDialog: document.getElementById("promptDialog"),
   resultDialog: document.getElementById("resultDialog"),
   apiEndpoint: document.getElementById("apiEndpoint"),
   apiModel: document.getElementById("apiModel"),
@@ -50,8 +53,13 @@ const elements = {
   temperature: document.getElementById("temperature"),
   saveApiSettings: document.getElementById("saveApiSettings"),
   analysisPrompt: document.getElementById("analysisPrompt"),
-  savePrompt: document.getElementById("savePrompt"),
   resetPrompt: document.getElementById("resetPrompt"),
+  knowledgeEnabled: document.getElementById("knowledgeEnabled"),
+  knowledgePath: document.getElementById("knowledgePath"),
+  importKnowledgeBase: document.getElementById("importKnowledgeBase"),
+  clearKnowledgeBase: document.getElementById("clearKnowledgeBase"),
+  knowledgeFileInput: document.getElementById("knowledgeFileInput"),
+  knowledgeSummary: document.getElementById("knowledgeSummary"),
   analysisMarkdown: document.getElementById("analysisMarkdown"),
   copyAnalysis: document.getElementById("copyAnalysis")
 };
@@ -60,6 +68,8 @@ let currentData = null;
 let apiSettings = { ...DEFAULT_API_SETTINGS };
 let analysisPrompt = DEFAULT_PROMPT;
 let analysisResult = null;
+let floatingEnabled = false;
+let knowledgeBase = { ...DEFAULT_KNOWLEDGE_BASE };
 
 function storageGet(defaults) {
   return new Promise((resolve, reject) => {
@@ -160,7 +170,7 @@ async function extract() {
     elements.title.value = data?.title || "";
     elements.abstract.value = data?.abstract || "";
     setStatus(
-      data?.ok ? `已识别：${data.source}` : "未识别到题目或摘要，可尝试页面浮窗或检查网页是否加载完成。",
+      data?.ok ? `已识别：${data.source}` : "未识别到标题或摘要，可尝试悬浮模式或检查网页是否加载完成。",
       data?.ok ? "success" : "info"
     );
     return data;
@@ -173,19 +183,6 @@ async function extract() {
 async function copyText(text, doneMessage) {
   await navigator.clipboard.writeText(text || "");
   setStatus(doneMessage, "success");
-}
-
-function downloadText() {
-  if (!currentData) return;
-
-  const blob = new Blob([formatData(currentData)], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${(currentData.title || "paper").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 80)}.txt`;
-  a.click();
-  URL.revokeObjectURL(url);
-  setStatus("TXT 已生成。", "success");
 }
 
 function showDialog(dialog) {
@@ -201,6 +198,21 @@ function updateApiState() {
   const isReady = Boolean(apiSettings.endpoint && apiSettings.model);
   elements.apiState.textContent = isReady ? `已配置：${apiSettings.model}` : "未配置 API";
   elements.apiState.classList.toggle("ready", isReady);
+}
+
+function updateFloatingButton() {
+  elements.showPanel.textContent = floatingEnabled ? "关闭悬浮" : "悬浮模式";
+  elements.showPanel.classList.toggle("primary", floatingEnabled);
+}
+
+function updateKnowledgeSummary() {
+  const fileCount = knowledgeBase.files?.length || 0;
+  const totalChars = (knowledgeBase.files || []).reduce((sum, file) => sum + file.content.length, 0);
+  elements.knowledgeEnabled.checked = Boolean(knowledgeBase.enabled);
+  elements.knowledgePath.value = knowledgeBase.directoryName || "";
+  elements.knowledgeSummary.textContent = fileCount
+    ? `已导入 ${fileCount} 个 Markdown 文件，约 ${totalChars.toLocaleString()} 字符。${knowledgeBase.enabled ? "分析时会启用。" : "当前未启用。"}`
+    : "默认关闭。启用后会把已导入的 Markdown 文件作为分析知识库。";
 }
 
 function fillApiForm() {
@@ -254,10 +266,12 @@ function normalizeDeepSeekModel(endpoint, model) {
   return model;
 }
 
-async function saveApiSettings() {
+async function saveSettings() {
   const endpoint = normalizeChatCompletionsEndpoint(elements.apiEndpoint.value);
   const originalModel = elements.apiModel.value.trim();
   const model = normalizeDeepSeekModel(endpoint, originalModel);
+  analysisPrompt = elements.analysisPrompt.value.trim() || DEFAULT_PROMPT;
+  elements.analysisPrompt.value = analysisPrompt;
 
   apiSettings = {
     endpoint,
@@ -265,25 +279,23 @@ async function saveApiSettings() {
     apiKey: elements.apiKey.value.trim(),
     temperature: clampTemperature(elements.temperature.value)
   };
+  knowledgeBase = {
+    ...DEFAULT_KNOWLEDGE_BASE,
+    ...knowledgeBase,
+    enabled: elements.knowledgeEnabled.checked
+  };
 
-  await storageSet({ apiSettings });
+  await storageSet({ apiSettings, analysisPrompt, knowledgeBase });
   fillApiForm();
+  updateKnowledgeSummary();
   updateApiState();
   elements.apiDialog.close();
   setStatus(
     originalModel && originalModel !== model
       ? `API 设置已保存。DeepSeek 旧模型 ${originalModel} 已切换为 ${model}。`
-      : "API 设置已保存。",
+      : "系统设置已保存。",
     "success"
   );
-}
-
-async function savePrompt() {
-  analysisPrompt = elements.analysisPrompt.value.trim() || DEFAULT_PROMPT;
-  elements.analysisPrompt.value = analysisPrompt;
-  await storageSet({ analysisPrompt });
-  elements.promptDialog.close();
-  setStatus("提示词已保存。", "success");
 }
 
 async function resetPrompt() {
@@ -291,6 +303,65 @@ async function resetPrompt() {
   elements.analysisPrompt.value = analysisPrompt;
   await storageSet({ analysisPrompt });
   setStatus("提示词已恢复默认。", "success");
+}
+
+function isMarkdownFile(file) {
+  return /\.(md|markdown)$/i.test(file.name);
+}
+
+function getDirectoryName(file) {
+  const relativePath = file.webkitRelativePath || file.name;
+  return relativePath.includes("/") ? relativePath.split("/")[0] : "";
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error(`读取文件失败：${file.name}`));
+    reader.readAsText(file, "utf-8");
+  });
+}
+
+async function importKnowledgeBaseFromFiles(fileList) {
+  const markdownFiles = Array.from(fileList || []).filter(isMarkdownFile);
+  if (!markdownFiles.length) {
+    setStatus("未找到 Markdown 文件。", "error");
+    return;
+  }
+
+  setStatus("正在导入 Markdown 知识库...");
+
+  const files = [];
+  for (const file of markdownFiles) {
+    const content = await readFileAsText(file);
+    files.push({
+      name: file.name,
+      path: file.webkitRelativePath || file.name,
+      content
+    });
+  }
+
+  knowledgeBase = {
+    enabled: elements.knowledgeEnabled.checked,
+    directoryName: getDirectoryName(markdownFiles[0]) || "Markdown 知识库",
+    importedAt: new Date().toISOString(),
+    files
+  };
+
+  await storageSet({ knowledgeBase });
+  updateKnowledgeSummary();
+  setStatus(`知识库已导入：${files.length} 个 Markdown 文件。`, "success");
+}
+
+async function clearKnowledgeBase() {
+  knowledgeBase = {
+    ...DEFAULT_KNOWLEDGE_BASE,
+    enabled: elements.knowledgeEnabled.checked
+  };
+  await storageSet({ knowledgeBase });
+  updateKnowledgeSummary();
+  setStatus("知识库已清空。", "success");
 }
 
 function escapeHtml(value) {
@@ -548,43 +619,63 @@ async function init() {
   const stored = await storageGet({
     apiSettings: DEFAULT_API_SETTINGS,
     analysisPrompt: DEFAULT_PROMPT,
-    analysisResult: null
+    analysisResult: null,
+    floatingEnabled: false,
+    knowledgeBase: DEFAULT_KNOWLEDGE_BASE
   });
 
   apiSettings = { ...DEFAULT_API_SETTINGS, ...(stored.apiSettings || {}) };
   analysisPrompt = stored.analysisPrompt || DEFAULT_PROMPT;
   analysisResult = stored.analysisResult;
+  floatingEnabled = Boolean(stored.floatingEnabled);
+  knowledgeBase = { ...DEFAULT_KNOWLEDGE_BASE, ...(stored.knowledgeBase || {}) };
 
   fillApiForm();
   elements.analysisPrompt.value = analysisPrompt;
   updateApiState();
+  updateFloatingButton();
+  updateKnowledgeSummary();
   renderAnalysisResult();
 
   extract().catch(() => {});
 }
 
 elements.refresh.addEventListener("click", () => extract().catch(() => {}));
-elements.copyTitle.addEventListener("click", () => copyText(elements.title.value, "题目已复制。"));
+elements.copyTitle.addEventListener("click", () => copyText(elements.title.value, "标题已复制。"));
 elements.copyAbstract.addEventListener("click", () => copyText(elements.abstract.value, "摘要已复制。"));
-elements.copyAll.addEventListener("click", () => currentData && copyText(formatData(currentData), "题目、摘要和 URL 已复制。"));
-elements.download.addEventListener("click", downloadText);
+elements.copyAll.addEventListener("click", () => currentData && copyText(formatData(currentData), "标题、摘要和 URL 已复制。"));
 elements.showPanel.addEventListener("click", async () => {
-  const data = await sendToActiveTab({ type: "TAE_SHOW_PANEL" });
-  currentData = data;
-  setStatus("页面浮窗已打开。", "success");
+  floatingEnabled = !floatingEnabled;
+  await storageSet({ floatingEnabled });
+  updateFloatingButton();
+
+  const data = await sendToActiveTab({
+    type: floatingEnabled ? "TAE_ENABLE_FLOATING" : "TAE_DISABLE_FLOATING"
+  });
+  currentData = data || currentData;
+  setStatus(
+    floatingEnabled ? "悬浮模式已开启，新打开的页面也会自动显示悬浮球。" : "悬浮模式已关闭。",
+    "success"
+  );
 });
 
-elements.apiSettings.addEventListener("click", () => {
+elements.settingsButton.addEventListener("click", () => {
   fillApiForm();
+  elements.analysisPrompt.value = analysisPrompt;
   showDialog(elements.apiDialog);
 });
-elements.promptSettings.addEventListener("click", () => {
-  elements.analysisPrompt.value = analysisPrompt;
-  showDialog(elements.promptDialog);
-});
-elements.saveApiSettings.addEventListener("click", () => saveApiSettings().catch((error) => setStatus(`保存失败：${error.message}`, "error")));
-elements.savePrompt.addEventListener("click", () => savePrompt().catch((error) => setStatus(`保存失败：${error.message}`, "error")));
+elements.saveApiSettings.addEventListener("click", () => saveSettings().catch((error) => setStatus(`保存失败：${error.message}`, "error")));
 elements.resetPrompt.addEventListener("click", () => resetPrompt().catch((error) => setStatus(`保存失败：${error.message}`, "error")));
+elements.knowledgeEnabled.addEventListener("change", () => {
+  knowledgeBase.enabled = elements.knowledgeEnabled.checked;
+  updateKnowledgeSummary();
+});
+elements.importKnowledgeBase.addEventListener("click", () => elements.knowledgeFileInput.click());
+elements.knowledgeFileInput.addEventListener("change", () => {
+  importKnowledgeBaseFromFiles(elements.knowledgeFileInput.files).catch((error) => setStatus(`导入失败：${error.message}`, "error"));
+  elements.knowledgeFileInput.value = "";
+});
+elements.clearKnowledgeBase.addEventListener("click", () => clearKnowledgeBase().catch((error) => setStatus(`清空失败：${error.message}`, "error")));
 elements.analyzePaper.addEventListener("click", analyzeCurrentPaper);
 elements.openResult.addEventListener("click", () => showDialog(elements.resultDialog));
 elements.copyAnalysis.addEventListener("click", () =>

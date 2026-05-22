@@ -37,6 +37,12 @@ body {
   margin-bottom: 12px;
 }
 
+.header-tools {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .eyebrow {
   margin: 0;
   color: var(--accent);
@@ -45,7 +51,8 @@ body {
 }
 
 h1,
-h2 {
+h2,
+h3 {
   margin: 0;
   line-height: 1.2;
 }
@@ -57,6 +64,11 @@ h1 {
 
 h2 {
   font-size: 18px;
+}
+
+h3 {
+  color: var(--ink);
+  font-size: 14px;
 }
 
 button {
@@ -86,6 +98,16 @@ button:disabled {
   border-radius: 50%;
   font-size: 20px;
   line-height: 1;
+}
+
+.header-tools .icon-button {
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.header-tools .icon-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .icon-button.small {
@@ -189,13 +211,13 @@ input:focus {
   background: var(--accent-dark);
 }
 
-.ai-panel {
+.tool-panel {
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--line);
 }
 
-.ai-panel-title {
+.tool-panel-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -203,21 +225,18 @@ input:focus {
   margin-bottom: 10px;
 }
 
-.ai-panel-title span {
+.tool-panel-title span {
   color: var(--muted);
   font-size: 12px;
 }
 
-.ai-panel-title span.ready {
+.tool-panel-title span.ready {
   color: var(--success);
-}
-
-.ai-actions {
-  margin-bottom: 8px;
 }
 
 .wide-button {
   width: 100%;
+  margin-top: 8px;
 }
 
 .modal {
@@ -246,6 +265,62 @@ input:focus {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 4px;
+}
+
+.settings-section {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.settings-section:first-of-type {
+  border-top: 0;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-head button {
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: none;
+}
+
+.switch input {
+  width: auto;
+}
+
+.input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.input-row button,
+#clearKnowledgeBase {
+  padding: 0 12px;
+}
+
+.hidden-file {
+  display: none;
+}
+
+.settings-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .modal-actions {

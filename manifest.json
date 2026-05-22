@@ -32,7 +32,8 @@
     "clipboardWrite",
     "contextMenus",
     "scripting",
-    "storage"
+    "storage",
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "https://*/*",

@@ -1,14 +1,21 @@
 const ANALYSIS_TIMEOUT_MS = 90000;
 const CHAT_COMPLETIONS_PATH = "/chat/completions";
+const MAX_KNOWLEDGE_BASE_CHARS = 120000;
 const DEEPSEEK_LEGACY_MODEL_MAP = {
   "deepseek-reasoner": "deepseek-v4-flash",
   "deepseek-chat": "deepseek-v4-flash"
+};
+const DEFAULT_KNOWLEDGE_BASE = {
+  enabled: false,
+  directoryName: "",
+  importedAt: "",
+  files: []
 };
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "tae-show-panel",
-    title: "提取论文题目和摘要",
+    title: "提取论文标题和摘要",
     contexts: ["page"]
   });
 });
@@ -27,7 +34,42 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-function buildAnalysisMessages(paper, prompt) {
+function buildKnowledgeBaseContext(knowledgeBase) {
+  if (!knowledgeBase?.enabled || !Array.isArray(knowledgeBase.files) || !knowledgeBase.files.length) {
+    return "";
+  }
+
+  let usedChars = 0;
+  const sections = [];
+  let truncated = false;
+
+  for (const file of knowledgeBase.files) {
+    const header = `\n\n## ${file.path || file.name || "knowledge.md"}\n`;
+    const content = String(file.content || "");
+    const remaining = MAX_KNOWLEDGE_BASE_CHARS - usedChars - header.length;
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+
+    sections.push(`${header}${content.slice(0, remaining)}`);
+    usedChars += header.length + Math.min(content.length, remaining);
+    if (content.length > remaining) {
+      truncated = true;
+      break;
+    }
+  }
+
+  return [
+    `以下是用户导入的 Markdown 知识库内容。请把它作为补充背景，用于弥补论文摘要中缺失的研究方向、术语、需求或领域资料。知识库目录：${knowledgeBase.directoryName || "未命名目录"}。`,
+    truncated ? `知识库内容较长，已按前 ${MAX_KNOWLEDGE_BASE_CHARS} 字符截断。` : "",
+    sections.join("")
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildAnalysisMessages(paper, prompt, knowledgeBaseContext = "") {
   const title = paper?.title || "未识别";
   const abstract = paper?.abstract || "未识别";
   const url = paper?.url || "";
@@ -50,10 +92,21 @@ function buildAnalysisMessages(paper, prompt) {
         "",
         `URL: ${url}`,
         "",
+        knowledgeBaseContext ? `Knowledge Base:\n${knowledgeBaseContext}\n` : "",
         "请使用 Markdown 格式输出，优先给出明确结论。"
-      ].join("\n")
+      ].filter(Boolean).join("\n")
     }
   ];
+}
+
+function storageGet(defaults) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(defaults, (items) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(items);
+    });
+  });
 }
 
 function readModelOutput(data) {
@@ -160,7 +213,7 @@ async function analyzePaper({ paper, settings, prompt }) {
   }
 
   if (!paper?.title && !paper?.abstract) {
-    throw new Error("当前页面没有可分析的题目或摘要。");
+    throw new Error("当前页面没有可分析的标题或摘要。");
   }
 
   const controller = new AbortController();
@@ -173,9 +226,11 @@ async function analyzePaper({ paper, settings, prompt }) {
     }
 
     const normalizedModel = normalizeModelForEndpoint(endpoint, model);
+    const stored = await storageGet({ knowledgeBase: DEFAULT_KNOWLEDGE_BASE });
+    const knowledgeBaseContext = buildKnowledgeBaseContext(stored.knowledgeBase);
     const requestBody = {
       model: normalizedModel.model,
-      messages: buildAnalysisMessages(paper, prompt),
+      messages: buildAnalysisMessages(paper, prompt, knowledgeBaseContext),
       temperature: Number.isFinite(settings?.temperature) ? settings.temperature : 0.2,
       stream: false
     };
