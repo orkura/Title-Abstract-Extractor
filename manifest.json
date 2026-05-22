@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Title Abstract Extractor",
+  "description": "Automatically extract paper titles and abstracts from IEEE Xplore, ScienceDirect, and other literature pages.",
+  "version": "1.1.0",
+  "action": {
+    "default_title": "Extract title and abstract",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://ieeexplore.ieee.org/*",
+        "https://www.sciencedirect.com/*",
+        "https://link.springer.com/*",
+        "https://dl.acm.org/*",
+        "https://www.mdpi.com/*",
+        "https://www.nature.com/*",
+        "https://pubs.acs.org/*",
+        "https://www.tandfonline.com/*",
+        "https://*/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": [
+    "activeTab",
+    "clipboardWrite",
+    "contextMenus",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ]
+}

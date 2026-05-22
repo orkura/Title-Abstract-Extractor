@@ -1,0 +1,594 @@
+const DEFAULT_API_SETTINGS = {
+  endpoint: "https://api.openai.com/v1/chat/completions",
+  model: "gpt-4o-mini",
+  apiKey: "",
+  temperature: 0.2
+};
+const CHAT_COMPLETIONS_PATH = "/chat/completions";
+const DEEPSEEK_LEGACY_MODEL_MAP = {
+  "deepseek-reasoner": "deepseek-v4-flash",
+  "deepseek-chat": "deepseek-v4-flash"
+};
+
+const DEFAULT_PROMPT = `你是我的论文筛选助手。请根据论文题目和摘要判断它是否符合我的研究需要。
+
+我的研究需要：
+- 研究方向：
+- 关注方法：
+- 关注应用场景：
+- 必须包含的关键词或特征：
+- 需要排除的内容：
+
+请用 Markdown 输出：
+1. **结论**：推荐阅读 / 可略读 / 不推荐，并给出置信度。
+2. **匹配理由**：说明与我的研究需要的对应关系。
+3. **潜在价值**：如果值得读，指出可能有用的理论、方法、数据或实验。
+4. **风险与缺口**：指出摘要中没有说明、可能不相关或需要进一步确认的地方。
+5. **下一步建议**：给出我应该看全文的哪些部分。`;
+
+const elements = {
+  status: document.getElementById("status"),
+  title: document.getElementById("title"),
+  abstract: document.getElementById("abstract"),
+  refresh: document.getElementById("refresh"),
+  copyTitle: document.getElementById("copyTitle"),
+  copyAbstract: document.getElementById("copyAbstract"),
+  copyAll: document.getElementById("copyAll"),
+  download: document.getElementById("download"),
+  showPanel: document.getElementById("showPanel"),
+  apiSettings: document.getElementById("apiSettings"),
+  promptSettings: document.getElementById("promptSettings"),
+  analyzePaper: document.getElementById("analyzePaper"),
+  openResult: document.getElementById("openResult"),
+  apiState: document.getElementById("apiState"),
+  apiDialog: document.getElementById("apiDialog"),
+  promptDialog: document.getElementById("promptDialog"),
+  resultDialog: document.getElementById("resultDialog"),
+  apiEndpoint: document.getElementById("apiEndpoint"),
+  apiModel: document.getElementById("apiModel"),
+  apiKey: document.getElementById("apiKey"),
+  temperature: document.getElementById("temperature"),
+  saveApiSettings: document.getElementById("saveApiSettings"),
+  analysisPrompt: document.getElementById("analysisPrompt"),
+  savePrompt: document.getElementById("savePrompt"),
+  resetPrompt: document.getElementById("resetPrompt"),
+  analysisMarkdown: document.getElementById("analysisMarkdown"),
+  copyAnalysis: document.getElementById("copyAnalysis")
+};
+
+let currentData = null;
+let apiSettings = { ...DEFAULT_API_SETTINGS };
+let analysisPrompt = DEFAULT_PROMPT;
+let analysisResult = null;
+
+function storageGet(defaults) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(defaults, (items) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(items);
+    });
+  });
+}
+
+function storageSet(items) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set(items, () => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve();
+    });
+  });
+}
+
+function sendRuntimeMessage(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(response);
+    });
+  });
+}
+
+function getActiveTab() {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(tab);
+    });
+  });
+}
+
+function sendTabMessage(tabId, message) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message));
+      else resolve(response);
+    });
+  });
+}
+
+function executeContentScript(tabId) {
+  return new Promise((resolve, reject) => {
+    chrome.scripting.executeScript(
+      {
+        target: { tabId },
+        files: ["content.js"]
+      },
+      () => {
+        const error = chrome.runtime.lastError;
+        if (error) reject(new Error(error.message));
+        else resolve();
+      }
+    );
+  });
+}
+
+function setStatus(message, tone = "info") {
+  elements.status.textContent = message;
+  elements.status.className = "status";
+  if (tone === "success" || tone === "error") {
+    elements.status.classList.add(tone);
+  }
+}
+
+function formatData(data) {
+  return `Title: ${data.title || "未识别"}\n\nAbstract: ${data.abstract || "未识别"}\n\nURL: ${data.url || ""}`;
+}
+
+async function sendToActiveTab(message) {
+  const tab = await getActiveTab();
+  if (!tab?.id) throw new Error("无法读取当前标签页。");
+
+  try {
+    return await sendTabMessage(tab.id, message);
+  } catch (_error) {
+    await executeContentScript(tab.id);
+    return sendTabMessage(tab.id, message);
+  }
+}
+
+async function extract() {
+  setStatus("正在读取当前页面...");
+
+  try {
+    const data = await sendToActiveTab({ type: "TAE_EXTRACT" });
+    currentData = data;
+    elements.title.value = data?.title || "";
+    elements.abstract.value = data?.abstract || "";
+    setStatus(
+      data?.ok ? `已识别：${data.source}` : "未识别到题目或摘要，可尝试页面浮窗或检查网页是否加载完成。",
+      data?.ok ? "success" : "info"
+    );
+    return data;
+  } catch (error) {
+    setStatus(`提取失败：${error.message}`, "error");
+    throw error;
+  }
+}
+
+async function copyText(text, doneMessage) {
+  await navigator.clipboard.writeText(text || "");
+  setStatus(doneMessage, "success");
+}
+
+function downloadText() {
+  if (!currentData) return;
+
+  const blob = new Blob([formatData(currentData)], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${(currentData.title || "paper").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 80)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+  setStatus("TXT 已生成。", "success");
+}
+
+function showDialog(dialog) {
+  if (dialog.open) return;
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
+}
+
+function updateApiState() {
+  const isReady = Boolean(apiSettings.endpoint && apiSettings.model);
+  elements.apiState.textContent = isReady ? `已配置：${apiSettings.model}` : "未配置 API";
+  elements.apiState.classList.toggle("ready", isReady);
+}
+
+function fillApiForm() {
+  elements.apiEndpoint.value = apiSettings.endpoint || "";
+  elements.apiModel.value = apiSettings.model || "";
+  elements.apiKey.value = apiSettings.apiKey || "";
+  elements.temperature.value = String(apiSettings.temperature ?? 0.2);
+}
+
+function clampTemperature(value) {
+  const number = Number.parseFloat(value);
+  if (!Number.isFinite(number)) return 0.2;
+  return Math.min(2, Math.max(0, number));
+}
+
+function normalizeChatCompletionsEndpoint(endpoint) {
+  const value = endpoint.trim();
+  if (!value) return "";
+
+  try {
+    const url = new URL(value);
+    if (url.hostname === "api.deepseek.com") {
+      url.pathname = CHAT_COMPLETIONS_PATH;
+      return url.toString();
+    }
+
+    const pathname = url.pathname.replace(/\/+$/, "");
+    if (pathname.endsWith(CHAT_COMPLETIONS_PATH)) {
+      url.pathname = pathname;
+      return url.toString();
+    }
+
+    const basePath = pathname === "" || pathname === "/" ? "" : pathname;
+    url.pathname = `${basePath}${CHAT_COMPLETIONS_PATH}`;
+    return url.toString();
+  } catch (_error) {
+    return value;
+  }
+}
+
+function normalizeDeepSeekModel(endpoint, model) {
+  try {
+    const url = new URL(endpoint);
+    if (url.hostname === "api.deepseek.com") {
+      return DEEPSEEK_LEGACY_MODEL_MAP[model] || model;
+    }
+  } catch (_error) {
+    return model;
+  }
+
+  return model;
+}
+
+async function saveApiSettings() {
+  const endpoint = normalizeChatCompletionsEndpoint(elements.apiEndpoint.value);
+  const originalModel = elements.apiModel.value.trim();
+  const model = normalizeDeepSeekModel(endpoint, originalModel);
+
+  apiSettings = {
+    endpoint,
+    model,
+    apiKey: elements.apiKey.value.trim(),
+    temperature: clampTemperature(elements.temperature.value)
+  };
+
+  await storageSet({ apiSettings });
+  fillApiForm();
+  updateApiState();
+  elements.apiDialog.close();
+  setStatus(
+    originalModel && originalModel !== model
+      ? `API 设置已保存。DeepSeek 旧模型 ${originalModel} 已切换为 ${model}。`
+      : "API 设置已保存。",
+    "success"
+  );
+}
+
+async function savePrompt() {
+  analysisPrompt = elements.analysisPrompt.value.trim() || DEFAULT_PROMPT;
+  elements.analysisPrompt.value = analysisPrompt;
+  await storageSet({ analysisPrompt });
+  elements.promptDialog.close();
+  setStatus("提示词已保存。", "success");
+}
+
+async function resetPrompt() {
+  analysisPrompt = DEFAULT_PROMPT;
+  elements.analysisPrompt.value = analysisPrompt;
+  await storageSet({ analysisPrompt });
+  setStatus("提示词已恢复默认。", "success");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderInlineMarkdown(value) {
+  let text = escapeHtml(value);
+  const codeTokens = [];
+
+  text = text.replace(/`([^`]+)`/g, (_match, code) => {
+    const index = codeTokens.push(`<code>${code}</code>`) - 1;
+    return `@@TAE_CODE_${index}@@`;
+  });
+
+  text = text.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noreferrer">$1</a>'
+  );
+  text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  text = text.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+
+  return text.replace(/@@TAE_CODE_(\d+)@@/g, (_match, index) => codeTokens[Number(index)] || "");
+}
+
+function isMarkdownTableRow(line) {
+  return /^\s*\|.+\|\s*$/.test(line);
+}
+
+function isMarkdownTableSeparator(line) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function splitMarkdownTableRow(line) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function renderMarkdownTable(headers, rows) {
+  const renderCells = (cells, tag) =>
+    cells.map((cell) => `<${tag}>${renderInlineMarkdown(cell)}</${tag}>`).join("");
+
+  return [
+    "<table>",
+    `<thead><tr>${renderCells(headers, "th")}</tr></thead>`,
+    "<tbody>",
+    ...rows.map((row) => `<tr>${renderCells(row, "td")}</tr>`),
+    "</tbody>",
+    "</table>"
+  ].join("");
+}
+
+function markdownToHtml(markdown) {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  let paragraph = [];
+  let listType = "";
+  let inCode = false;
+  let codeLines = [];
+
+  const closeParagraph = () => {
+    if (!paragraph.length) return;
+    html.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+
+  const closeList = () => {
+    if (!listType) return;
+    html.push(`</${listType}>`);
+    listType = "";
+  };
+
+  const openList = (type) => {
+    if (listType === type) return;
+    closeParagraph();
+    closeList();
+    html.push(`<${type}>`);
+    listType = type;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (/^```/.test(line.trim())) {
+      if (inCode) {
+        html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+        codeLines = [];
+        inCode = false;
+      } else {
+        closeParagraph();
+        closeList();
+        inCode = true;
+      }
+      continue;
+    }
+
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+
+    if (!line.trim()) {
+      closeParagraph();
+      closeList();
+      continue;
+    }
+
+    if (isMarkdownTableRow(line) && isMarkdownTableSeparator(lines[index + 1] || "")) {
+      closeParagraph();
+      closeList();
+
+      const headers = splitMarkdownTableRow(line);
+      const rows = [];
+      index += 2;
+
+      while (index < lines.length && isMarkdownTableRow(lines[index])) {
+        rows.push(splitMarkdownTableRow(lines[index]));
+        index += 1;
+      }
+
+      index -= 1;
+      html.push(renderMarkdownTable(headers, rows));
+      continue;
+    }
+
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      closeParagraph();
+      closeList();
+      html.push("<hr>");
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      closeParagraph();
+      closeList();
+      const level = heading[1].length;
+      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    const unordered = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (unordered) {
+      openList("ul");
+      html.push(`<li>${renderInlineMarkdown(unordered[1])}</li>`);
+      continue;
+    }
+
+    const ordered = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (ordered) {
+      openList("ol");
+      html.push(`<li>${renderInlineMarkdown(ordered[1])}</li>`);
+      continue;
+    }
+
+    const quote = line.match(/^\s*>\s?(.+)$/);
+    if (quote) {
+      closeParagraph();
+      closeList();
+      html.push(`<blockquote>${renderInlineMarkdown(quote[1])}</blockquote>`);
+      continue;
+    }
+
+    paragraph.push(line.trim());
+  }
+
+  if (inCode) {
+    html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+  }
+  closeParagraph();
+  closeList();
+
+  return html.join("");
+}
+
+function renderAnalysisResult() {
+  if (!analysisResult?.markdown) {
+    elements.analysisMarkdown.classList.add("empty");
+    elements.analysisMarkdown.textContent = "还没有分析结果。";
+    elements.openResult.disabled = true;
+    return;
+  }
+
+  elements.analysisMarkdown.classList.remove("empty");
+  elements.analysisMarkdown.innerHTML = markdownToHtml(analysisResult.markdown);
+  elements.openResult.disabled = false;
+}
+
+async function setAnalysisResult(result) {
+  analysisResult = result;
+  await storageSet({ analysisResult });
+  renderAnalysisResult();
+}
+
+function setBusy(button, isBusy, busyText) {
+  if (!button.dataset.originalText) {
+    button.dataset.originalText = button.textContent;
+  }
+  button.disabled = isBusy;
+  button.textContent = isBusy ? busyText : button.dataset.originalText;
+}
+
+async function ensurePaperData() {
+  if (currentData?.title || currentData?.abstract) return currentData;
+  return extract();
+}
+
+async function analyzeCurrentPaper() {
+  setBusy(elements.analyzePaper, true, "分析中...");
+  setStatus("正在调用大语言模型分析论文...");
+
+  try {
+    const paper = await ensurePaperData();
+    const result = await sendRuntimeMessage({
+      type: "TAE_ANALYZE_PAPER",
+      paper,
+      settings: apiSettings,
+      prompt: analysisPrompt
+    });
+
+    if (!result?.ok) {
+      throw new Error(result?.error || "分析失败。");
+    }
+
+    await setAnalysisResult({
+      markdown: result.markdown,
+      analyzedAt: result.analyzedAt,
+      endpoint: result.endpoint,
+      model: result.model,
+      notice: result.notice,
+      paperTitle: paper.title || ""
+    });
+    setStatus(
+      result.notice || `分析完成，结果已按 Markdown 渲染。请求地址：${result.endpoint || "已配置 API"}`,
+      "success"
+    );
+    showDialog(elements.resultDialog);
+  } catch (error) {
+    setStatus(`分析失败：${error.message}`, "error");
+  } finally {
+    setBusy(elements.analyzePaper, false);
+  }
+}
+
+async function init() {
+  const stored = await storageGet({
+    apiSettings: DEFAULT_API_SETTINGS,
+    analysisPrompt: DEFAULT_PROMPT,
+    analysisResult: null
+  });
+
+  apiSettings = { ...DEFAULT_API_SETTINGS, ...(stored.apiSettings || {}) };
+  analysisPrompt = stored.analysisPrompt || DEFAULT_PROMPT;
+  analysisResult = stored.analysisResult;
+
+  fillApiForm();
+  elements.analysisPrompt.value = analysisPrompt;
+  updateApiState();
+  renderAnalysisResult();
+
+  extract().catch(() => {});
+}
+
+elements.refresh.addEventListener("click", () => extract().catch(() => {}));
+elements.copyTitle.addEventListener("click", () => copyText(elements.title.value, "题目已复制。"));
+elements.copyAbstract.addEventListener("click", () => copyText(elements.abstract.value, "摘要已复制。"));
+elements.copyAll.addEventListener("click", () => currentData && copyText(formatData(currentData), "题目、摘要和 URL 已复制。"));
+elements.download.addEventListener("click", downloadText);
+elements.showPanel.addEventListener("click", async () => {
+  const data = await sendToActiveTab({ type: "TAE_SHOW_PANEL" });
+  currentData = data;
+  setStatus("页面浮窗已打开。", "success");
+});
+
+elements.apiSettings.addEventListener("click", () => {
+  fillApiForm();
+  showDialog(elements.apiDialog);
+});
+elements.promptSettings.addEventListener("click", () => {
+  elements.analysisPrompt.value = analysisPrompt;
+  showDialog(elements.promptDialog);
+});
+elements.saveApiSettings.addEventListener("click", () => saveApiSettings().catch((error) => setStatus(`保存失败：${error.message}`, "error")));
+elements.savePrompt.addEventListener("click", () => savePrompt().catch((error) => setStatus(`保存失败：${error.message}`, "error")));
+elements.resetPrompt.addEventListener("click", () => resetPrompt().catch((error) => setStatus(`保存失败：${error.message}`, "error")));
+elements.analyzePaper.addEventListener("click", analyzeCurrentPaper);
+elements.openResult.addEventListener("click", () => showDialog(elements.resultDialog));
+elements.copyAnalysis.addEventListener("click", () =>
+  copyText(analysisResult?.markdown || "", "分析结果 Markdown 已复制。")
+);
+
+init().catch((error) => setStatus(`初始化失败：${error.message}`, "error"));

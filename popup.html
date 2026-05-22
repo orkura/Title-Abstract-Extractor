@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Title Abstract Extractor</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <div>
+          <p class="eyebrow">Literature Extractor</p>
+          <h1>题目与摘要</h1>
+        </div>
+        <button id="refresh" class="icon-button" type="button" title="重新提取" aria-label="重新提取">
+          ↻
+        </button>
+      </header>
+
+      <section class="status" id="status">正在读取当前页面...</section>
+
+      <section class="field">
+        <div class="field-title">
+          <label for="title">Title</label>
+          <button id="copyTitle" type="button">复制</button>
+        </div>
+        <textarea id="title" rows="3" readonly></textarea>
+      </section>
+
+      <section class="field">
+        <div class="field-title">
+          <label for="abstract">Abstract</label>
+          <button id="copyAbstract" type="button">复制</button>
+        </div>
+        <textarea id="abstract" rows="8" readonly></textarea>
+      </section>
+
+      <section class="actions">
+        <button id="copyAll" class="primary" type="button">复制全部</button>
+        <button id="download" type="button">导出 TXT</button>
+        <button id="showPanel" type="button">页面浮窗</button>
+      </section>
+
+      <section class="ai-panel" aria-label="大语言模型分析">
+        <div class="ai-panel-title">
+          <strong>LLM 论文筛选</strong>
+          <span id="apiState">未配置 API</span>
+        </div>
+        <div class="actions ai-actions">
+          <button id="apiSettings" type="button">API 设置</button>
+          <button id="promptSettings" type="button">提示词</button>
+          <button id="analyzePaper" class="primary" type="button">分析论文</button>
+        </div>
+        <button id="openResult" class="wide-button" type="button" disabled>查看分析结果</button>
+      </section>
+    </main>
+
+    <dialog id="apiDialog" class="modal">
+      <form method="dialog" class="modal-inner">
+        <div class="modal-head">
+          <h2>API 设置</h2>
+          <button class="icon-button small" value="cancel" type="submit" aria-label="关闭">×</button>
+        </div>
+
+        <label class="stacked-label" for="apiEndpoint">API 地址</label>
+        <input id="apiEndpoint" type="url" placeholder="https://api.openai.com/v1/chat/completions">
+
+        <label class="stacked-label" for="apiModel">模型</label>
+        <input id="apiModel" type="text" placeholder="gpt-4o-mini">
+
+        <label class="stacked-label" for="apiKey">API Key</label>
+        <input id="apiKey" type="password" autocomplete="off" placeholder="sk-...">
+
+        <label class="stacked-label" for="temperature">Temperature</label>
+        <input id="temperature" type="number" min="0" max="2" step="0.1">
+
+        <div class="modal-actions">
+          <button id="saveApiSettings" class="primary" value="default" type="button">保存</button>
+          <button value="cancel" type="submit">取消</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="promptDialog" class="modal">
+      <form method="dialog" class="modal-inner">
+        <div class="modal-head">
+          <h2>提示词设置</h2>
+          <button class="icon-button small" value="cancel" type="submit" aria-label="关闭">×</button>
+        </div>
+
+        <label class="stacked-label" for="analysisPrompt">如何解读论文</label>
+        <textarea id="analysisPrompt" rows="13"></textarea>
+
+        <div class="modal-actions">
+          <button id="savePrompt" class="primary" value="default" type="button">保存</button>
+          <button id="resetPrompt" type="button">恢复默认</button>
+          <button value="cancel" type="submit">取消</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="resultDialog" class="modal result-modal">
+      <form method="dialog" class="modal-inner">
+        <div class="modal-head">
+          <h2>分析结果</h2>
+          <button class="icon-button small" value="cancel" type="submit" aria-label="关闭">×</button>
+        </div>
+
+        <article id="analysisMarkdown" class="markdown-view empty">还没有分析结果。</article>
+
+        <div class="modal-actions">
+          <button id="copyAnalysis" class="primary" type="button">复制 Markdown</button>
+          <button value="cancel" type="submit">关闭</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
